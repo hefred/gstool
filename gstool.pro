@@ -4,7 +4,7 @@
 #
 #-------------------------------------------------
 
-QT       += core gui charts
+QT       += core gui charts axcontainer concurrent
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -24,6 +24,10 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 
 SOURCES += main.cpp\
-        dialog.cpp
+        dialog.cpp \
+    ExcelRW.cpp \
+    gaussianmodel.cpp
 
-HEADERS  += dialog.h
+HEADERS  += dialog.h \
+    ExcelRW.h \
+    gaussianmodel.h
