@@ -330,6 +330,10 @@ bool ExcelRW::setCurrentSheet(int index)
 bool ExcelRW::setName(int index, const QString& sheetName)
 {
     bool ret = false;
+    if (index > sheetCount())
+    {
+        return addSheet(sheetName);
+    }
 #if defined(Q_OS_WIN)
     Q_D(ExcelRW);
     if (d->sheets != NULL && !d->sheets->isNull())

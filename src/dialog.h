@@ -41,6 +41,7 @@ public:
     int irow;
     int icol;
     int iprogress;
+    bool haveRepeatFlag;
     bool bfinished;
     QString msg;
 
@@ -101,6 +102,7 @@ private:
     QPieSlice* m_errorD;
     QPieSlice* m_repeatD;
     QChart* m_pRocC;
+    QLineSeries* m_rocL;
     SDataStruct m_data;
 
     QList< QList<QVariant> > m_xlsDatas;

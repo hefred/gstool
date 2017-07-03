@@ -14,8 +14,11 @@ SDataStruct::SDataStruct(QObject *parent)
     irow=0;
     icol=0;
     iprogress=0;
+    haveRepeatFlag = false;
     bfinished=false;
     model = NULL;
+    numRocLines = 0;
+    bestRocLine = 0;
 }
 
 SDataStruct::~SDataStruct()
@@ -29,6 +32,7 @@ void SDataStruct::init()
     irow=0;
     icol=0;
     iprogress=0;
+    haveRepeatFlag = false;
     bfinished=false;
 
     xlsTitles.clear();
@@ -139,10 +143,10 @@ Dialog::Dialog(QWidget *parent)
     m_pRocC->setAnimationOptions(QChart::AllAnimations);
     m_pRocC->legend()->hide();
 
-    QLineSeries* rocL = new QLineSeries();
-    rocL->append(0, 0);
-    rocL->append(1, 1);
-    m_pRocC->addSeries(rocL);
+    m_rocL = new QLineSeries();
+    m_rocL->append(0, 0);
+    m_rocL->append(1, 1);
+    m_pRocC->addSeries(m_rocL);
     m_pRocC->createDefaultAxes();
 
     // btn
@@ -177,6 +181,10 @@ QString Dialog::parseDate(QList<QList<QVariant> > &xlsDatas, SDataStruct* datas)
     emit datas->logMsg(tr("\n*******************\nBegin parse data"));
     datas->validDatas.clear();
     bool bok = false;
+    int numTarget = 1;
+    if (datas->haveRepeatFlag)
+        numTarget = 2;
+
     for (int i=1; i<datas->irow; i++)
     {
         QString itemKey;
@@ -194,7 +202,7 @@ QString Dialog::parseDate(QList<QList<QVariant> > &xlsDatas, SDataStruct* datas)
             {
                 rvs[j] = vlaue;
             }
-            if (j > 0)
+            if (j >= numTarget)
             {
                 itemKey += "_";
                 itemKey += values[j].toString();
@@ -282,6 +290,10 @@ QString Dialog::trainModel(SDataStruct *datas)
     int predictRow = datas->testDatas.size();
     int col = datas->xlsTitles.size() - 1;
 
+    int targetId = 0;
+    if (datas->haveRepeatFlag)
+        targetId = 1;
+
     DblVecVec training_data;
     DblVecVec predict_data;
     DblVec training_meas;
@@ -296,11 +308,11 @@ QString Dialog::trainModel(SDataStruct *datas)
 
     for(int i = 0 ; i < trainRow; i++)
     {
-        training_meas[i] = datas->trainDatas[i][0];
+        training_meas[i] = datas->trainDatas[i][targetId];
         training_data[i].resize(col);
         for (int j=0; j<col; j++)
         {
-           training_data[i][j] = datas->trainDatas[i][j+1];
+           training_data[i][j] = datas->trainDatas[i][targetId+j+1];
         }
 
         datas->iprogress = 305 + qRound((20.0/trainRow)*i);
@@ -314,7 +326,7 @@ QString Dialog::trainModel(SDataStruct *datas)
         predict_data[i].resize(col);
         for (int j=0; j<col; j++)
         {
-           predict_data[i][j] = datas->testDatas[i][j+1];
+           predict_data[i][j] = datas->testDatas[i][targetId+j+1];
         }
         datas->iprogress = 330 + qRound((10.0/predictRow)*i);
     }
@@ -365,17 +377,21 @@ QString Dialog::trainModel(SDataStruct *datas)
             datas->model->train(new_trainingdata, new_trainingmeas, trainSize, col);
             //predict
             datas->model->predict(predict_data, predictRow, predict_meas);
-            QSet<double> dataForSortSet;
+//            QSet<double> dataForSortSet;
+//            for(int i = 0; i < predictRow; i++)
+//                dataForSortSet.insert(predict_meas[i]);
+//            QList<double> thresholdList = dataForSortSet.toList();
+            QList<double> thresholdList;
             for(int i = 0; i < predictRow; i++)
-                dataForSortSet.insert(predict_meas[i]);
-            QList<double> thresholdList = dataForSortSet.toList();
+                thresholdList.append(predict_meas[i]);
             qSort(thresholdList);
 
             QList<QPointF> rocLine;
             double area = 0, pastTPR = 0, pastFPR = 0;
-            for(int j = 0; j < thresholdList.size(); j++)
+            for(int j = 0; j < 10; j++)
             {
-                double threshold = thresholdList[j];
+                double threshold = thresholdList[static_cast<int>(predictRow*0.1*j)];
+
                 int TP = 0, FP = 0, TN = 0, FN = 0;
                 int value = 0;
                 for(int i = 0; i < predictRow; i++)
@@ -485,8 +501,10 @@ QString Dialog::trainModel(SDataStruct *datas)
 void Dialog::openDataFile()
 {
     QString filename = QFileDialog::getOpenFileName(this, tr("选择数据文件"), "", tr("Excel (*.xls *.xlsx)"));
-    m_pDateFile->setText(filename);
+    if (filename.isEmpty())
+        return;
 
+    m_pDateFile->setText(filename);
     m_pProgressBar->setValue(1);
 
     ExcelRW xlsReader;
@@ -506,7 +524,10 @@ void Dialog::openDataFile()
 
     //init UI and data
     m_data.init();
-    m_pRocC->removeAllSeries();
+//    m_pRocC->removeAllSeries();
+    m_rocL->clear();
+    m_rocL->append(0, 0);
+    m_rocL->append(1, 1);
     m_pRocC->setTitle(tr("Roc AUC=0.5"));
     m_tranD->setValue(1);
     m_tranD->setLabel(tr("训练集 0"));
@@ -536,6 +557,11 @@ void Dialog::openDataFile()
         m_data.xlsTitles.append(title);
     }
     m_pProgressBar->setValue(100);
+
+    if (m_data.xlsTitles[1].contains("repeat", Qt::CaseInsensitive))
+    {
+        m_data.haveRepeatFlag = true;
+    }
 
     m_data.iprogress = 100;
     QFuture<QString> future = QtConcurrent::run(Dialog::parseDate, m_xlsDatas, &m_data);
@@ -569,10 +595,10 @@ void Dialog::dumpData()
 
 
     xlsWer.setName(1, tr("训练数据"));
-    xlsWer.addSheet(tr("测试数据"));
-    xlsWer.addSheet(tr("最坏数据"));
-    xlsWer.addSheet(tr("重复数据"));
-    xlsWer.addSheet(tr("无效数据"));
+    xlsWer.setName(2, tr("测试数据"));
+    xlsWer.setName(3, tr("最坏数据"));
+    xlsWer.setName(4, tr("重复数据"));
+    xlsWer.setName(5, tr("无效数据"));
 
     // train data
     xlsWer.setCurrentSheet(1);
@@ -703,6 +729,10 @@ void Dialog::timerEvent(QTimerEvent *event)
 //        m_pRocC->addSeries(rocl);
 //        rocl->append(m_data.rocLines[numRoc]);
 //    }
+
+    m_rocL->clear();
+    m_rocL->append(m_data.rocLines.last());
+    m_pRocC->setTitle(tr("Roc AUC=%1").arg(m_data.rocArea.last()));
 
     if (m_pLogUI->document()->lineCount() > 2000)
         m_pLogUI->clear();
