@@ -43,6 +43,7 @@ public:
     int iprogress;
     bool haveRepeatFlag;
     bool bfinished;
+    bool bStopTraining;
     QString msg;
 
     QStringList xlsTitles;
@@ -59,10 +60,12 @@ public:
 
     GaussianModel* model;
     int numRocLines;
+    int currentRocLine;
     int bestRocLine;
     QVector<QList<QPointF>> rocLines;
     QVector<double> rocArea;
 
+    QVector<double> currentPredictValues;
     QVector<double> bestPredictValues;
 };
 
@@ -85,6 +88,7 @@ protected slots:
     void openDataFile();
     void saveModel();
     void dumpData();
+    void stopTraining();
 
 protected:
     static void run();
