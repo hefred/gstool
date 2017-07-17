@@ -55,18 +55,17 @@ public:
     QVector<QVector<double> > testDatas;
 
     QVector<QVector<double> > badDatas;
-    QList<QVariant> errorDatas;
+    QList<QList<QVariant> > errorDatas;
     QVector<QVector<double> > repeatDatas;
 
     GaussianModel* model;
     int numRocLines;
     int currentRocLine;
-    int bestRocLine;
+    int bestPredictIndex;
+
     QVector<QList<QPointF>> rocLines;
     QVector<double> rocArea;
-
-    QVector<double> currentPredictValues;
-    QVector<double> bestPredictValues;
+    QVector<QVector<double> > predictValues;
 };
 
 typedef QVector<double>     DblVec;
@@ -105,8 +104,13 @@ private:
     QPieSlice* m_tranD;
     QPieSlice* m_errorD;
     QPieSlice* m_repeatD;
+
+    QChart* m_pRocAreaC;
+    QLineSeries* m_rocAreaL;
+
     QChart* m_pRocC;
     QLineSeries* m_rocL;
+
     SDataStruct m_data;
 
     QList< QList<QVariant> > m_xlsDatas;

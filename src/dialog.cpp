@@ -21,7 +21,7 @@ SDataStruct::SDataStruct(QObject *parent)
     model = NULL;
     numRocLines = 0;
     currentRocLine = 0;
-    bestRocLine = 0;
+    bestPredictIndex = 0;
 }
 
 SDataStruct::~SDataStruct()
@@ -57,11 +57,10 @@ void SDataStruct::init()
 
     numRocLines = 0;
     currentRocLine = 0;
-    bestRocLine = 0;
+    bestPredictIndex = 0;
     rocLines.clear();
     rocArea.clear();
-    currentPredictValues.clear();
-    bestPredictValues.clear();
+    predictValues.clear();
 }
 
 
@@ -94,7 +93,7 @@ Dialog::Dialog(QWidget *parent)
     pProgressLayout->addWidget(pLable2, 1);
     QLabel* pLable3 = new QLabel(tr("拆分测试集"));
     pProgressLayout->addWidget(pLable3, 1);
-    QLabel* pLable4 = new QLabel(tr("10次循环优化训练"));
+    QLabel* pLable4 = new QLabel(tr("循环优化"));
     pProgressLayout->addWidget(pLable4, 1);
     QLabel* pLable5 = new QLabel(tr("完成"));
     pProgressLayout->addWidget(pLable5, 1, Qt::AlignRight);
@@ -105,6 +104,21 @@ Dialog::Dialog(QWidget *parent)
     m_pProgressBar->setMinimum(0);
     m_pProgressBar->setMaximum(500);
 
+    // ROC area
+    m_pRocAreaC = new QChart();
+    QChartView* pRocAreaV = new QChartView(m_pRocAreaC, this);
+    pMainLayout->addWidget(pRocAreaV);
+    m_pRocAreaC->setTheme(QChart::ChartThemeDark);
+    m_pRocAreaC->setAnimationOptions(QChart::NoAnimation);
+    m_pRocAreaC->legend()->hide();
+    pRocAreaV->setRenderHint(QPainter::Antialiasing, true);
+
+    m_rocAreaL = new QLineSeries();
+    m_pRocAreaC->addSeries(m_rocAreaL);
+    m_rocAreaL->setPointsVisible();
+    m_pRocAreaC->createDefaultAxes();
+    m_pRocAreaC->axisY()->setRange(0.5, 1);
+
     // message and roc
     QHBoxLayout* pRocLayout = new QHBoxLayout();
     pMainLayout->addLayout(pRocLayout);
@@ -113,12 +127,11 @@ Dialog::Dialog(QWidget *parent)
     pRocLayout->addWidget(m_pLogUI);
     m_pLogUI->setReadOnly(true);
     m_pLogUI->setWordWrapMode(QTextOption::NoWrap);
-//    m_pLogUI->setFixedHeight(150);
 
     QChart* m_pDataC = new QChart();
     QChartView* pDataCV = new QChartView(m_pDataC, this);
     pRocLayout->addWidget(pDataCV);
-//    pDataCV->setFixedSize(150, 150);
+    pDataCV->setRenderHint(QPainter::Antialiasing, true);
 
     m_pDataC->setTitle(tr("数据分布"));
     m_pDataC->setTheme(QChart::ChartThemeDark);
@@ -131,7 +144,7 @@ Dialog::Dialog(QWidget *parent)
     m_pDataS->setHoleSize(0.25);
 
     m_tranD = m_pDataS->append(tr("训练集 0"), 1);
-    m_badD = m_pDataS->append(tr("剔除数据 0"), 1);
+    m_badD = m_pDataS->append(tr("剔除 0"), 1);
     m_testD = m_pDataS->append(tr("测试集 0"), 1);
     m_repeatD = m_pDataS->append(tr("重复 0"), 1);
     m_errorD = m_pDataS->append(tr("残缺 0"), 1);
@@ -179,7 +192,7 @@ Dialog::Dialog(QWidget *parent)
     setPalette(pal);
 
     connect(&m_data, SIGNAL(logMsg(QString)), m_pLogUI, SLOT(append(QString)));
-    setMinimumSize(900, 400);
+    setMinimumSize(900, 700);
 }
 
 Dialog::~Dialog()
@@ -281,10 +294,10 @@ QString Dialog::splitDate(SDataStruct *datas)
 
     for(int i=0; i < numValid; i++)
     {
-        if (i%4 != 0)
-            datas->trainDatas.append(datas->validDatas[i]);
-        else
+        if (i%3 == 2)
             datas->testDatas.append(datas->validDatas[i]);
+        else
+            datas->trainDatas.append(datas->validDatas[i]);
 
         Sleep(1);
         datas->iprogress = 200 + qRound((90.0/numValid)*i);
@@ -349,15 +362,24 @@ QString Dialog::trainModel(SDataStruct *datas)
     datas->iprogress = 340;
     Sleep(10);
 
-    double Max_area = 0.5;
+    double Max_area = 0;
     int bad_index = 0;
     DblVecVec new_trainingdata;
     DblVec new_trainingmeas;
+    QList<double> thresholdList;
+    QList<QPointF> bestRocLine;
+    DblVec bestPredictMeas;
+    QList<QPointF> rocLine;
+
     QString msg;
-    for(int time = 0; time < 11; time++)
+    int numLoop = trainRow - 3;
+    double stepProgress = 150.0/double(numLoop);
+    for(int time = 0; time < numLoop; time++)
     {
         msg = QString("\n############\n Begin %1 time training data for find out bad data").arg(time);
         emit datas->logMsg(msg);
+
+        Max_area = 0;
         for(int index = 0; index < trainRow; index++)
         {
             // can stop the loop
@@ -366,33 +388,20 @@ QString Dialog::trainModel(SDataStruct *datas)
                 Sleep(100);
             }
 
+//            msg = QString("  Try delete #%1 train data").arg(index);
+//            emit datas->logMsg(msg);
+
             new_trainingdata.clear();
             new_trainingmeas.clear();
             int trainSize=0;
 
-            if (time == 0)
+            for(int index_new = 0; index_new < trainRow; index_new++)
             {
-                msg = QString("  Begin init training");
-                emit datas->logMsg(msg);
-
-                new_trainingdata = training_data;
-                new_trainingmeas = training_meas;
-                trainSize = trainRow;
-            }
-            else
-            {
-                msg = QString("  Begin test %1 data for roc").arg(index);
-                emit datas->logMsg(msg);
-
-                for(int index_new = 0; index_new < trainRow; index_new++)
+                if(index_new != index)
                 {
-                    if(index_new != index)
-                    {
-                        new_trainingdata.push_back(training_data[index_new]);
-                        new_trainingmeas.push_back(training_meas[index_new]);
-                        trainSize++;
-                    }
-                    Sleep(1);
+                    new_trainingdata.push_back(training_data[index_new]);
+                    new_trainingmeas.push_back(training_meas[index_new]);
+                    trainSize++;
                 }
             }
 
@@ -408,16 +417,12 @@ QString Dialog::trainModel(SDataStruct *datas)
                        |  0  |  FP  |  TN   |  x = FPR=FP/(FP+TN)
                        ------------------------------
             */
-//            QSet<double> dataForSortSet;
-//            for(int i = 0; i < predictRow; i++)
-//                dataForSortSet.insert(predict_meas[i]);
-//            QList<double> thresholdList = dataForSortSet.toList();
-            QList<double> thresholdList;
+            thresholdList.clear();
             for(int i = 0; i < predictRow; i++)
                 thresholdList.append(predict_meas[i]);
             qSort(thresholdList.begin(), thresholdList.end(), qGreater<double>());
 
-            QList<QPointF> rocLine;
+            rocLine.clear();
             double area = 0, pastTPR = 0, pastFPR = 0;
             for(int j = 0; j < 10; j++)
             {
@@ -427,13 +432,6 @@ QString Dialog::trainModel(SDataStruct *datas)
                 int value = 0;
                 for(int i = 0; i < predictRow; i++)
                 {
-                    if (0 == j)
-                    {
-                        msg = QString("   treal value: %1, predict value: %3")
-                                .arg(real_predict_meas[i]).arg(predict_meas[i]);
-                        emit datas->logMsg(msg);
-                    }
-
                     if(predict_meas[i] < threshold)
                         value = 0;
                     else
@@ -452,82 +450,61 @@ QString Dialog::trainModel(SDataStruct *datas)
                         else
                             TP++;
                     }
-                    Sleep(1);
                 }
                 double FPR = (FP*1.0)/(FP+TN);
                 double TPR = (TP*1.0)/(TP+FN);
 
                 rocLine.append(QPointF(FPR, TPR));
-                msg = QString("   threshold %4 is: %1, FPR: %2, TPR: %3").arg(threshold).arg(FPR).arg(TPR).arg(j);
-                emit datas->logMsg(msg);
 
                 area += (TPR + pastTPR)*(FPR-pastFPR)/2;
                 pastTPR = TPR;
                 pastFPR = FPR;
-
-                Sleep(1);
             }
             area += (1 + pastTPR)*(1-pastFPR)/2;
+//            msg = tr("  Roc area %1 ").arg(area);
+//            emit datas->logMsg(msg);
 
-            if (0 == time)
+            if(area > Max_area)
             {
                 Max_area = area;
+                bad_index = index;
+
+                bestRocLine = rocLine;
+                bestPredictMeas = predict_meas;
             }
-            else
-            {
-                if(area > Max_area)
-                {
-                    Max_area = area;
-                    bad_index = index;
-
-                    datas->bestPredictValues = predict_meas;
-                    datas->bestRocLine = datas->numRocLines;
-
-                    msg = QString("Get better roc when delete %1, AUC %2").arg(index).arg(area);
-                    emit datas->logMsg(msg);
-                }
-            }
-
-            msg = QString("  ######## AUC: %1").arg(area);
-            emit datas->logMsg(msg);
-
-            datas->currentPredictValues = predict_meas;
-            datas->rocLines.append(rocLine);
-            datas->rocArea.append(area);
-            datas->numRocLines++;
-
-            if (0 == time)
-                break;
 
             Sleep(1);
         }
 
-        Sleep(10);
-        datas->iprogress = 340 + 15*time;
+        datas->iprogress = 340 + qFloor(stepProgress*time);
 
-        if (0 == time)
-            continue;
+        datas->predictValues.append(bestPredictMeas);
+        datas->rocLines.append(bestRocLine);
+        datas->rocArea.append(Max_area);
+
+        qDebug() << real_predict_meas;
+        qDebug() << bestPredictMeas;
+
+        if (Max_area > datas->rocArea[datas->bestPredictIndex])
+        {
+            datas->bestPredictIndex = datas->numRocLines;
+        }
+        datas->numRocLines++;
 
         //handle for next round.
-        if(bad_index > 0)
-        {
-            msg = tr("\tFind a bad tran data %1, move it").arg(bad_index);
-            emit datas->logMsg(msg);
-            training_data.erase(training_data.begin()+bad_index);
-            training_meas.erase(training_meas.begin()+bad_index);
+        msg = tr("  Best area %1, Find a bad train data %2, move it").arg(Max_area).arg(bad_index);
+        emit datas->logMsg(msg);
 
-            datas->badDatas.append(datas->trainDatas[bad_index]);
-            datas->trainDatas.remove(bad_index);
+        training_data.erase(training_data.begin()+bad_index);
+        training_meas.erase(training_meas.begin()+bad_index);
 
-            bad_index = 0;
-            trainRow--;
-        }
-        else
-        {
-            msg = QString("Not found better roc in round: %1").arg(time);
-            emit datas->logMsg(msg);
-            break;
-        }
+        datas->badDatas.append(datas->trainDatas[bad_index]);
+        datas->trainDatas.remove(bad_index);
+
+        bad_index = 0;
+        trainRow--;
+
+        Sleep(1);
     }
 
     datas->iprogress = 500;
@@ -561,6 +538,7 @@ void Dialog::openDataFile()
 
     //init UI and data
     m_data.init();
+    m_rocAreaL->clear();
 //    m_pRocC->removeAllSeries();
     m_rocL->clear();
     m_rocL->append(0, 0);
@@ -575,7 +553,7 @@ void Dialog::openDataFile()
     m_errorD->setValue(1);
     m_errorD->setLabel(tr("残缺 0"));
     m_badD->setValue(1);
-    m_badD->setLabel(tr("剔除数据 0"));
+    m_badD->setLabel(tr("剔除 0"));
 
     int irow = m_xlsDatas.size();
     int icol = m_xlsDatas[0].size();
@@ -697,11 +675,7 @@ void Dialog::dumpData()
     sheetDatas.append(tileRow);
     for (int i=0; i<m_data.errorDatas.size(); i++)
     {
-        sheetDatas.append(QList<QVariant>());
-        for (int j=0; j<m_data.icol; j++)
-        {
-            sheetDatas[i+1].append(m_data.trainDatas[i][j]);
-        }
+        sheetDatas.append(m_data.errorDatas[i]);
     }
     timer.restart();
     xlsWer.writeCurrentSheet(sheetDatas);
@@ -723,9 +697,9 @@ void Dialog::dumpData()
             sheetDatas[i+1].append(m_data.testDatas[i][j]);
         }
         if (m_data.bfinished)
-            sheetDatas[i+1].append(m_data.bestPredictValues[i]);
+            sheetDatas[i+1].append(m_data.predictValues[m_data.bestPredictIndex][i]);
         else
-            sheetDatas[i+1].append(m_data.currentPredictValues[i]);
+            sheetDatas[i+1].append(m_data.predictValues.back()[i]);
     }
     timer.restart();
     xlsWer.writeCurrentSheet(sheetDatas);
@@ -760,7 +734,7 @@ void Dialog::stopTraining()
 
 void Dialog::timerEvent(QTimerEvent *event)
 {
-    if (m_data.bfinished || m_data.iprogress >= 500)
+    if (m_data.bfinished)
     {
         killTimer(m_timerId);
         m_timerId = 0;
@@ -773,36 +747,58 @@ void Dialog::timerEvent(QTimerEvent *event)
         if (m_data.numRocLines > 0)
         {
             m_rocL->clear();
-            m_rocL->append(m_data.rocLines[m_data.bestRocLine]);
-            m_pRocC->setTitle(tr("Best Roc AUC=%1").arg(m_data.rocArea[m_data.bestRocLine]));
+            m_rocL->append(m_data.rocLines[m_data.bestPredictIndex]);
+            m_pRocC->setTitle(tr("Best Roc AUC=%1").arg(m_data.rocArea[m_data.bestPredictIndex]));
         }
     }
 
-    m_tranD->setValue(m_data.trainDatas.size());
-    m_tranD->setLabel(tr("训练集 %1").arg(m_data.trainDatas.size()));
-    m_testD->setValue(m_data.testDatas.size());
-    m_testD->setLabel(tr("测试集 %1").arg(m_data.testDatas.size()));
-    m_repeatD->setValue(m_data.repeatDatas.size());
-    m_repeatD->setLabel(tr("重复 %1").arg(m_data.repeatDatas.size()));
-    m_errorD->setValue(m_data.errorDatas.size());
-    m_errorD->setLabel(tr("残缺 %1").arg(m_data.errorDatas.size()));
-    m_badD->setValue(m_data.badDatas.size());
-    m_badD->setLabel(tr("剔除数据 %1").arg(m_data.badDatas.size()));
-
-//    int numRoc = m_pRocC->series().size();
-//    for ( ; numRoc<m_data.numRocLines; numRoc++)
-//    {
-//        QLineSeries* rocl = new QLineSeries();
-//        m_pRocC->addSeries(rocl);
-//        rocl->append(m_data.rocLines[numRoc]);
-//    }
-
-    if (m_data.numRocLines > 0 && m_data.currentRocLine != m_data.numRocLines - 1)
+    if (m_data.trainDatas.size())
     {
-        m_data.currentRocLine = m_data.numRocLines - 1;
+        m_tranD->setValue(m_data.trainDatas.size());
+        m_tranD->setLabel(tr("训练集 %1").arg(m_data.trainDatas.size()));
+        m_testD->setValue(m_data.testDatas.size());
+        m_testD->setLabel(tr("测试集 %1").arg(m_data.testDatas.size()));
+
+        m_badD->setValue(m_data.badDatas.size());
+        m_badD->setLabel(tr("剔除 %1").arg(m_data.badDatas.size()));
+    }
+
+    if (m_data.repeatDatas.size())
+    {
+        m_repeatD->setValue(m_data.repeatDatas.size());
+        m_repeatD->setLabel(tr("重复 %1").arg(m_data.repeatDatas.size()));
+        m_repeatD->setLabelVisible(true);
+    }
+    else
+    {
+        m_repeatD->setValue(0);
+        m_repeatD->setLabelVisible(false);
+    }
+
+    if (m_data.errorDatas.size())
+    {
+        m_errorD->setValue(m_data.errorDatas.size());
+        m_errorD->setLabel(tr("残缺 %1").arg(m_data.errorDatas.size()));
+        m_errorD->setLabelVisible(true);
+    }
+    else
+    {
+        m_errorD->setValue(0);
+        m_errorD->setLabelVisible(false);
+    }
+
+    if (m_data.currentRocLine < m_data.numRocLines)
+    {
+        m_pRocAreaC->axisX()->setRange(0, m_data.numRocLines);
+        for (; m_data.currentRocLine < m_data.numRocLines; )
+        {
+            m_rocAreaL->append(m_data.currentRocLine, m_data.rocArea[m_data.currentRocLine]);
+            m_data.currentRocLine++;
+        }
+
         m_rocL->clear();
-        m_rocL->append(m_data.rocLines[m_data.currentRocLine]);
-        m_pRocC->setTitle(tr("Roc AUC=%1").arg(m_data.rocArea[m_data.currentRocLine]));
+        m_rocL->append(m_data.rocLines.back());
+        m_pRocC->setTitle(tr("Roc AUC=%1").arg(m_data.rocArea.back()));
         m_pRocC->update();
     }
 
