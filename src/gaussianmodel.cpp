@@ -319,13 +319,22 @@ bool GaussianModel::normalizeAllTrainingData(const DblVec &x_train, const DblVec
             temp_array[j] = x_train[j * _iDimension + i];
         _xTrainMean[i] = mean(temp_array);
         _xTrainStd[i] = std(temp_array);
-        assert(fabs(_xTrainStd[i]) > 0);
+        if (fabs(_xTrainStd[i]) == 0)
+        {
+            QString msg = QString("The train data variable Col %1 std = 0, so can't continue.").arg(i);
+            throw msg;
+        }
     }
     for (int i = 0; i < _iTrainingDataSize; ++i)
         temp_array[i] = y_train[i];
     _yTrainMean = mean(temp_array);
     _yTrainStd = std(temp_array);
-    assert(fabs(_yTrainStd) > 0);
+
+    if (fabs(_yTrainStd) == 0)
+    {
+        QString msg = QString("The train data predict values std = 0, so can't continue.");
+        throw msg;
+    }
 
     // Normalize data
     for (int i = 0; i < _iTrainingDataSize; ++i)

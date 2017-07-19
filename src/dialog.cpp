@@ -362,8 +362,10 @@ QString Dialog::trainModel(SDataStruct *datas)
     datas->iprogress = 340;
     Sleep(10);
 
+    double area = 0, pastTPR = 0, pastFPR = 0;
     double Max_area = 0;
     int bad_index = 0;
+
     DblVecVec new_trainingdata;
     DblVec new_trainingmeas;
     QList<double> thresholdList;
@@ -405,10 +407,21 @@ QString Dialog::trainModel(SDataStruct *datas)
                 }
             }
 
-            //crate model
-            datas->model->train(new_trainingdata, new_trainingmeas, trainSize, col);
-            //predict
-            datas->model->predict(predict_data, predictRow, predict_meas);
+            try
+            {
+                //crate model
+                datas->model->train(new_trainingdata, new_trainingmeas, trainSize, col);
+                //predict
+                datas->model->predict(predict_data, predictRow, predict_meas);
+            }
+            catch (QString& e_msg)
+            {
+                emit datas->logMsg(e_msg);
+
+                datas->iprogress = 500;
+                datas->bfinished = true;
+                return "";
+            }
 
             /*       predict |  1   |   0   |
             -----------------------------------------
@@ -423,7 +436,9 @@ QString Dialog::trainModel(SDataStruct *datas)
             qSort(thresholdList.begin(), thresholdList.end(), qGreater<double>());
 
             rocLine.clear();
-            double area = 0, pastTPR = 0, pastFPR = 0;
+            area = 0;
+            pastTPR = 0;
+            pastFPR = 0;
             for(int j = 0; j < 10; j++)
             {
                 double threshold = thresholdList[static_cast<int>(predictRow*0.1*j)];
@@ -474,6 +489,13 @@ QString Dialog::trainModel(SDataStruct *datas)
             }
 
             Sleep(1);
+        }
+
+        if (bad_index == 0 && Max_area <= area)
+        {
+            msg = tr("## End loop, no found out best roc, all roc are same in this loop.");
+            emit datas->logMsg(msg);
+            break;
         }
 
         datas->iprogress = 340 + qFloor(stepProgress*time);
